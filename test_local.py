@@ -1,14 +1,11 @@
 from nose.tools import assert_equal
-from .config_online import config
+from .config_local import config
 import json
 import requests
 import logging
 
-## 存在的问题：
-# 现在测试能跑通，但各个测试之间存在先后依赖关系，需要让各个测试解耦 (逻辑上不重复，实际上测试的api有重合
-# 应该更多的针对功能测试而不是api测试 （api测试也是功能测试的一部分
-# 需要保证运行测试前后，数据库中的数据保持不变，这点还没做到 （新增了接口，已经可以做到了
-# 需要增加一些api 包括 get videos 与 post records （post 多条）
+# test_online 的拷贝
+# 只改了一下 config 源
 
 class test_backend:
 
