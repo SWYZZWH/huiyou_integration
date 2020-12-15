@@ -2,7 +2,10 @@
     "content": [
       {
         "bvid": "BV1111",
-        "play": "0"
+        "play": "0",
+        "pic" : "123",
+        "author" : "yst",
+        "title" : "dagongren" 
       }
     ]
 }
