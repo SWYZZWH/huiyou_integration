@@ -4,8 +4,11 @@ import json
 import requests
 import logging
 
-# test_online 的拷贝
-# 只改了一下 config 源
+## 存在的问题：
+# 现在测试能跑通，但各个测试之间存在先后依赖关系，需要让各个测试解耦 (逻辑上不重复，实际上测试的api有重合
+# 应该更多的针对功能测试而不是api测试 （api测试也是功能测试的一部分
+# 需要保证运行测试前后，数据库中的数据保持不变，这点还没做到 （新增了接口，已经可以做到了
+# 需要增加一些api 包括 get videos 与 post records （post 多条）
 
 class test_backend:
 
@@ -18,12 +21,40 @@ class test_backend:
         r = requests.delete(self.videos_url)
         assert_equal(r.status_code == 200, True, "delete videos failed")
 
+        # r = requests.delete(self.chart_url)
+        # assert_equal(r.status_code == 200, True, "delete chart failed")
+    
+    def restoredb(self):
+        # 恢复 records
+        with open("records_save.json", "r") as f:
+            records = json.load(f)
+        req = {}
+        req["content"] = records
+        r = requests.post(self.post_all_records_url, json=req,
+                         headers={"content-type": "application/json"})
+        assert_equal(r.status_code, 200, "restore records failed")
+
+        # 恢复 videos
+        with open("videos_save.json", "r") as f:
+            videos = json.load(f)
+        req = {}
+        req["content"] = videos
+        if videos != []:
+            # 做转换，将play转为int型
+            for video in req["content"]:
+                video["play"] = int(video["play"])
+
+            r = requests.post(self.videos_url, json=req,
+                            headers={"content-type": "application/json"})
+            assert_equal(r.status_code, 200, "restore videos failed")
+
     def setup(self):
         self.base_url = config["domin"] + ":" + config["port"] + "/api/"
         logging.info(self.base_url)
 
         self.records_url = self.base_url + "records" 
         self.videos_url = self.base_url + "videos" 
+        self.chart_url = self.base_url + "chart"
         self.post_all_records_url = self.records_url + "/all"
         self.get_all_videos_url = self.videos_url + "/all"
         self.event_list = ["longEnough", "like", "coin", "favorite", "share"] # 目前支持汇报的事件列表
@@ -43,6 +74,14 @@ class test_backend:
         videos = json.loads(r.content)
         with open("videos_save.json", "w") as f:
             json.dump(videos, f)
+
+        # # 保存chart
+        # r = requests.get(self.chart_url+"/all", 
+        #                  headers={"content-type": "application/json"})
+        # assert_equal(r.status_code, 200, "get chart failed")
+        # chart = json.loads(r.content)
+        # with open("json_save.json", "w") as f:
+        #     json.dump(chart, f)
 
 
     # 测试服务有没有挂掉
@@ -144,7 +183,7 @@ class test_backend:
 
 
     # 测试删除接口是否正常
-    def test_records_delete(self):
+    def test_delete_records(self):
         self.cleardb()
 
         # 先post
@@ -202,6 +241,9 @@ class test_backend:
 
         #logging.info("videos database have {} items after delete".format(len(json.loads(r_get.content)["content"])))
         assert_equal(r.status_code == 200 and len(json.loads(r_get.content)) == 0, True, "delete videos failed")
+
+    # def test_delete_chart(self):
+    #     self
 
     # def test_videos_get(self):
     #     """
@@ -300,30 +342,54 @@ class test_backend:
 
         assert_equal(r.text == "null", True, "high play videos are not handled correctly in recommendation chain")
 
+    # 先 post 一条记录，然后 patch 一个正面反馈（但播放量低），此时 get chart 应该为空
+    # 此时再 patch 一个正面反馈（另一用户）且播放量很高，此时 get chart 应有该视频
+    def test_chart(self):
+
+        self.cleardb()
+        with open("json/post_records.json", "r") as f:
+            record = json.load(f)
+        r = requests.post(self.records_url, json=record,
+                         headers={"content-type": "application/json"})
+        assert_equal(r.status_code, 200, "status code is not 200")
+
+        bvid = record["bvid"]
+        uid = record["uid"]
+
+        # 手动清除 record 中用户的chart
+        r = requests.delete(self.chart_url + "?uid={}".format(uid))
+        assert_equal(r.status_code, 200, "delete failed")
+
+        with open("json/patch_videos_low_play.json", "r") as f:
+            j = json.load(f)
+        r = requests.patch(self.videos_url, json=j,
+                         headers={"content-type": "application/json"})
+        assert_equal(r.status_code, 200, "status code is not 200")
+
+        r = requests.get(self.chart_url + "?uid={}".format(uid),
+                        headers={"content-type": "application/json"})
+        logging.info("len:{}".format(len(json.loads(r.content))))
+        assert_equal(len(json.loads(r.content)) , 0 , "get should return empty now")
+        
+        with open("json/patch_videos_high_play.json", "r") as f:
+            j = json.load(f)
+        r = requests.patch(self.videos_url, json=j,
+                         headers={"content-type": "application/json"})
+        assert_equal(r.status_code, 200, "status code is not 200")
+
+        r = requests.get(self.chart_url + "?uid={}".format(uid),
+                        headers={"content-type": "application/json"})
+        logging.info("len:{}".format(len(json.loads(r.content))))
+        assert_equal(len(json.loads(r.content)) , 1 , "get should return exactly 1 video")
+        assert_equal(json.loads(r.content)[0]["bvid"] , bvid , "bvid dosen't match")
+
+        # 手动清除 record 中用户的chart
+        r = requests.delete(self.chart_url + "?uid={}".format(uid))
+        assert_equal(r.status_code, 200, "delete failed")
+
 
     # 先清空数据库，再恢复数据
     def teardown(self):
         self.cleardb()
-
-        # 恢复 records
-        with open("records_save.json", "r") as f:
-            records = json.load(f)
-        req = {}
-        req["content"] = records
-        r = requests.post(self.post_all_records_url, json=req,
-                         headers={"content-type": "application/json"})
-        assert_equal(r.status_code, 200, "restore records failed")
-
-        # 恢复 videos
-        with open("videos_save.json", "r") as f:
-            videos = json.load(f)
-        req = {}
-        req["content"] = videos
-        if videos != []:
-            # 做转换，将play转为int型
-            for video in req["content"]:
-                video["play"] = int(video["play"])
-
-            r = requests.post(self.videos_url, json=req,
-                            headers={"content-type": "application/json"})
-            assert_equal(r.status_code, 200, "restore videos failed")
+        self.restoredb()
+        
